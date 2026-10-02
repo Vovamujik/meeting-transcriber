@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "meeting-transcriber",
+  "version": "0.1.0",
+  "description": "Transcribe meeting recordings locally into timestamped, speaker-labelled .txt (WhisperX + pyannote)",
+  "author": {
+    "name": "Vovamujik",
+    "url": "https://github.com/Vovamujik"
+  },
+  "homepage": "https://github.com/Vovamujik/meeting-transcriber",
+  "repository": "https://github.com/Vovamujik/meeting-transcriber",
+  "license": "MIT",
+  "keywords": ["transcription", "whisperx", "speaker-diarization", "meetings"]
+}

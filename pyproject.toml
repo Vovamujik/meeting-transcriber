@@ -1,0 +1,41 @@
+[project]
+name = "meeting-transcriber"
+version = "0.1.0"
+description = "Transcribe meeting recordings locally into a timestamped, speaker-labelled .txt for LLMs (WhisperX + pyannote)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12,<3.14"
+keywords = ["transcription", "whisperx", "speaker-diarization", "meetings", "agent-skills"]
+classifiers = [
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "certifi>=2024.2.2",
+    "python-dotenv>=1.2.4",
+    "rich>=13",
+    "whisperx==3.8.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/Vovamujik/meeting-transcriber"
+Issues = "https://github.com/Vovamujik/meeting-transcriber/issues"
+
+[project.scripts]
+meeting-transcriber = "meeting_transcriber.cli:run"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I"]

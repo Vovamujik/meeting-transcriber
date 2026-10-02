@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "vovamujik",
+  "description": "Local meeting transcription for coding agents",
+  "owner": {
+    "name": "Vovamujik",
+    "url": "https://github.com/Vovamujik"
+  },
+  "plugins": [
+    {
+      "name": "meeting-transcriber",
+      "source": "./",
+      "category": "productivity",
+      "description": "Transcribe meeting recordings locally into timestamped, speaker-labelled .txt (WhisperX + pyannote)"
+    }
+  ]
+}
