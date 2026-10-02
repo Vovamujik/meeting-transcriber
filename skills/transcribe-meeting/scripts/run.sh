@@ -4,7 +4,8 @@
 #   - standalone skill folder (npx skills add, manual copy): runs the pinned release via uvx
 set -euo pipefail
 
-RELEASE="${MEETING_TRANSCRIBER_SPEC:-git+https://github.com/Vovamujik/meeting-transcriber@v0.1.0}"
+# v0.1.0, pinned by commit: a tag needs the network to resolve, a commit lets uvx reuse its cache offline
+RELEASE="${MEETING_TRANSCRIBER_SPEC:-git+https://github.com/Vovamujik/meeting-transcriber@08f1c11a7cf413128107635c6678afd3e82f788d}"
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 ROOT="$(cd "$SKILL_DIR/../.." && pwd -P)"
 

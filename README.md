@@ -234,6 +234,8 @@ claude plugin validate .     # marketplace and plugin manifests
 uvx --from skills-ref agentskills validate skills/transcribe-meeting
 ```
 
+Releasing: bump the version in `pyproject.toml` and `.claude-plugin/plugin.json`, tag `vX.Y.Z`, push the tag, then pin `RELEASE` in `skills/transcribe-meeting/scripts/run.sh` and the `uvx` line in `SKILL.md` to the new release.
+
 The code is small: `src/meeting_transcriber/cli.py` (pipeline, CLI, transcript formatting) and `ui.py` (terminal output). Issues and pull requests are welcome; please include your OS, GPU, the command you ran and the output of `--verbose`.
 
 ## Acknowledgements
