@@ -20,4 +20,8 @@ if grep -qs '^name = "meeting-transcriber"' "$ROOT/pyproject.toml"; then
   fi
   exec uv run --frozen --project "$ROOT" meeting-transcriber "$@"
 fi
+# Prefer the cached environment (works offline, no GitHub round-trip); fetch the release only if it isn't cached yet.
+if uvx --offline --from "$RELEASE" meeting-transcriber --version >/dev/null 2>&1; then
+  exec uvx --offline --from "$RELEASE" meeting-transcriber "$@"
+fi
 exec uvx --from "$RELEASE" meeting-transcriber "$@"

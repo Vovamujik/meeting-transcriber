@@ -27,16 +27,16 @@ Automatic transcript: words and speaker labels may contain errors.
 - **Speaker labels that follow the words.** Every word is time-aligned and assigned to a speaker, so turns are split correctly even when people interrupt each other.
 - **LLM-friendly output.** Consecutive phrases of one speaker are merged into a turn; long monologues are split about every 45 s so timestamps stay useful.
 - **Any input ffmpeg can read**: m4a, mp3, wav, ogg, flac, mp4, mov, webm…
-- **Uses your GPU** when it can: NVIDIA (CUDA) for everything, Apple Silicon for speaker diarization.
+- **Uses your GPU** when it can: NVIDIA (CUDA) on Linux for everything, Apple Silicon for speaker diarization. On Windows it runs on the CPU (PyTorch from PyPI is CPU-only there).
 - **Readable progress**: per-stage progress bars with ETA; one broken file doesn't stop a batch.
 
 ## Requirements
 
 | | |
 |---|---|
-| OS | macOS on Apple Silicon, Linux, Windows. Intel Macs are not supported (no PyTorch builds). |
-| Tools | [uv](https://docs.astral.sh/uv/getting-started/installation/) and [ffmpeg](https://ffmpeg.org/download.html). uv installs the right Python by itself. |
-| Disk | ~2 GB for Python packages (~6 GB on Linux, where PyTorch ships with CUDA) + 2–4 GB for models |
+| OS | macOS 14+ on Apple Silicon, Linux, Windows. Intel Macs are not supported (no PyTorch builds). |
+| Tools | [uv](https://docs.astral.sh/uv/getting-started/installation/), [ffmpeg](https://ffmpeg.org/download.html) and [git](https://git-scm.com/downloads) (uv uses it to install from GitHub). uv installs the right Python by itself. |
+| Disk | ~2 GB for Python packages (~7.5 GB on Linux x86_64, where PyTorch ships with CUDA) + 2–4 GB for models |
 | RAM | 8 GB minimum, 16 GB recommended |
 | Speaker labels | a free [Hugging Face](https://huggingface.co) account and token (see below) |
 
@@ -48,11 +48,12 @@ brew install uv ffmpeg
 
 # Debian / Ubuntu
 curl -LsSf https://astral.sh/uv/install.sh | sh
-sudo apt install ffmpeg
+sudo apt install ffmpeg git
 
 # Windows
 winget install astral-sh.uv
 winget install Gyan.FFmpeg
+winget install Git.Git
 ```
 
 ## Install
@@ -71,6 +72,8 @@ cd meeting-transcriber
 uv sync
 uv run meeting-transcriber --help
 ```
+
+From a clone, prefix the commands below with `uv run` (for example `uv run meeting-transcriber --check`).
 
 ## Hugging Face token (for speaker labels)
 
@@ -105,7 +108,7 @@ meeting-transcriber 0.1.0 · Python 3.12.6 · Darwin arm64
 meeting-transcriber ~/Downloads/meeting.m4a --lang en
 ```
 
-The `.txt` is written next to the recording, and its path is printed to stdout. The first run downloads the models (2–4 GB) into `~/.cache/huggingface`; later runs work offline.
+The `.txt` is written next to the recording, and its path is printed to stdout. An existing file is never overwritten: a second run writes `meeting (2).txt`. The first run downloads the models (2–4 GB) into `~/.cache/huggingface`; later runs work offline (if Hugging Face is unreachable, the cached models are used right away).
 
 ```bash
 # several files into one folder
@@ -146,7 +149,7 @@ Loading models
 | `-s, --speakers N` | Exact number of speakers, if known |
 | `--min-speakers N`, `--max-speakers N` | A range, if the exact number isn't known |
 | `--no-diarize` | No speaker labels (no token needed) |
-| `--device auto\|cuda\|cpu` | Device for speech recognition and alignment. `auto` uses an NVIDIA GPU if there is one. |
+| `--device auto\|cuda\|cpu` | Device for speech recognition and alignment. `auto` uses an NVIDIA GPU if there is one (Linux; on Windows the default PyTorch is CPU-only). |
 | `--diarize-device auto\|cuda\|mps\|cpu` | Device for speaker diarization. `auto`: NVIDIA GPU, then Apple GPU, then CPU. |
 | `--compute-type TYPE` | Whisper precision: `float16` on GPU, `int8` on CPU by default |
 | `--batch-size N` | Default 8. Lower it if you run out of memory. |
@@ -227,7 +230,8 @@ Alignment models for other languages are listed in WhisperX; check each model ca
 uv sync                      # includes pytest and ruff
 uv run pytest                # pure-logic tests, no models needed
 uv run ruff check src tests
-claude plugin validate .     # plugin and skill manifests
+claude plugin validate .     # marketplace and plugin manifests
+uvx --from skills-ref agentskills validate skills/transcribe-meeting
 ```
 
 The code is small: `src/meeting_transcriber/cli.py` (pipeline, CLI, transcript formatting) and `ui.py` (terminal output). Issues and pull requests are welcome; please include your OS, GPU, the command you ran and the output of `--verbose`.

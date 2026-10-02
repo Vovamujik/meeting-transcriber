@@ -24,16 +24,16 @@
 - **Спикеры привязаны к словам.** Каждое слово выравнивается по времени и получает своего спикера, поэтому реплики режутся правильно, даже когда люди перебивают друг друга.
 - **Удобно для нейронок.** Подряд идущие фразы одного человека склеиваются в реплику, длинный монолог делится на абзацы примерно раз в 45 секунд.
 - **Любой формат, который читает ffmpeg**: m4a, mp3, wav, ogg, flac, mp4, mov, webm…
-- **Использует видеокарту**, где может: NVIDIA (CUDA) для всего, GPU Apple Silicon для разделения по спикерам.
+- **Использует видеокарту**, где может: NVIDIA (CUDA) на Linux для всего, GPU Apple Silicon для разделения по спикерам. На Windows всё идёт на CPU (PyTorch с PyPI там без CUDA).
 - **Понятный прогресс**: этапы с полосами и оценкой оставшегося времени; битый файл не останавливает пачку.
 
 ## Требования
 
 | | |
 |---|---|
-| ОС | macOS на Apple Silicon, Linux, Windows. Mac на Intel не поддерживается (под него нет сборок PyTorch). |
-| Инструменты | [uv](https://docs.astral.sh/uv/getting-started/installation/) и [ffmpeg](https://ffmpeg.org/download.html). Нужный Python uv поставит сам. |
-| Диск | ~2 ГБ на Python-пакеты (~6 ГБ на Linux, там PyTorch идёт с CUDA) + 2–4 ГБ на модели |
+| ОС | macOS 14+ на Apple Silicon, Linux, Windows. Mac на Intel не поддерживается (под него нет сборок PyTorch). |
+| Инструменты | [uv](https://docs.astral.sh/uv/getting-started/installation/), [ffmpeg](https://ffmpeg.org/download.html) и [git](https://git-scm.com/downloads) (через него uv ставит пакет с GitHub). Нужный Python uv поставит сам. |
+| Диск | ~2 ГБ на Python-пакеты (~7,5 ГБ на Linux x86_64, там PyTorch идёт с CUDA) + 2–4 ГБ на модели |
 | Память | минимум 8 ГБ, лучше 16 ГБ |
 | Разделение по спикерам | бесплатный аккаунт и токен [Hugging Face](https://huggingface.co) (см. ниже) |
 
@@ -45,11 +45,12 @@ brew install uv ffmpeg
 
 # Debian / Ubuntu
 curl -LsSf https://astral.sh/uv/install.sh | sh
-sudo apt install ffmpeg
+sudo apt install ffmpeg git
 
 # Windows
 winget install astral-sh.uv
 winget install Gyan.FFmpeg
+winget install Git.Git
 ```
 
 ## Установка
@@ -68,6 +69,8 @@ cd meeting-transcriber
 uv sync
 uv run meeting-transcriber --help
 ```
+
+Из клона запускай команды ниже через `uv run` (например, `uv run meeting-transcriber --check`).
 
 ## Токен Hugging Face (для разделения по спикерам)
 
@@ -102,7 +105,7 @@ meeting-transcriber 0.1.0 · Python 3.12.6 · Darwin arm64
 meeting-transcriber ~/Downloads/meeting.m4a --lang ru
 ```
 
-`.txt` появится рядом с записью, а путь к нему печатается в stdout. Первый запуск скачает модели (2–4 ГБ) в `~/.cache/huggingface`, дальше всё работает без интернета.
+`.txt` появится рядом с записью, а путь к нему печатается в stdout. Существующий файл не перезаписывается: повторный запуск создаст `meeting (2).txt`. Первый запуск скачает модели (2–4 ГБ) в `~/.cache/huggingface`, дальше всё работает без интернета (если Hugging Face недоступен, сразу берутся модели из кэша).
 
 ```bash
 # несколько файлов в одну папку
@@ -143,7 +146,7 @@ Loading models
 | `-s, --speakers N` | Точное число спикеров, если известно |
 | `--min-speakers N`, `--max-speakers N` | Диапазон, если точное число неизвестно |
 | `--no-diarize` | Без разделения по спикерам (токен не нужен) |
-| `--device auto\|cuda\|cpu` | Где распознавать речь. `auto` берёт видеокарту NVIDIA, если она есть. |
+| `--device auto\|cuda\|cpu` | Где распознавать речь. `auto` берёт видеокарту NVIDIA, если она есть (Linux; на Windows PyTorch по умолчанию без CUDA). |
 | `--diarize-device auto\|cuda\|mps\|cpu` | Где считать спикеров. `auto`: NVIDIA, затем GPU Apple, затем CPU. |
 | `--compute-type ТИП` | Точность Whisper: по умолчанию `float16` на GPU и `int8` на CPU |
 | `--batch-size N` | По умолчанию 8. Уменьши, если не хватает памяти. |
@@ -226,7 +229,8 @@ npx skills add Vovamujik/meeting-transcriber -g
 uv sync                      # вместе с pytest и ruff
 uv run pytest                # тесты чистой логики, модели не нужны
 uv run ruff check src tests
-claude plugin validate .     # манифесты плагина и скила
+claude plugin validate .     # манифесты маркетплейса и плагина
+uvx --from skills-ref agentskills validate skills/transcribe-meeting
 ```
 
 Кода немного: `src/meeting_transcriber/cli.py` (конвейер, CLI, формат расшифровки) и `ui.py` (вывод в терминал). Issues и pull requests приветствуются; в баг-репорте укажи ОС, видеокарту, команду и вывод с `--verbose`.

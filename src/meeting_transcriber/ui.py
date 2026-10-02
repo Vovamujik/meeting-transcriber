@@ -102,6 +102,7 @@ class Stages:
             StageStats(table_column=Column(no_wrap=True)),
             console=console,
         )
+        self._labels = dict(labels)
         self._ids: dict[str, TaskID] = {
             key: self.progress.add_task(label, total=None, start=False) for key, label in labels
         }
@@ -118,10 +119,17 @@ class Stages:
         """Yields a progress callback (0–100). Until it's first called the bar pulses: running, % unknown."""
         task_id = self._ids[key]
         self.progress.start_task(task_id)
+        # stderr is a file or pipe (nohup, agents): rich draws the bars only once, at the end, so log plain lines
+        plain, label, t0, last = not console.is_interactive, self._labels[key], time.monotonic(), [0.0]
+        if plain:
+            console.print(f"  {label}: started")
 
         def on_progress(pct: float) -> None:
             # StageStats needs the update time for its ETA; same clock as rich (time.monotonic)
             self.progress.update(task_id, total=100, completed=pct, updated_at=time.monotonic())
+            if plain and 100 > pct >= last[0] + 10:
+                last[0] = pct
+                console.print(f"  {label}: {pct:.0f}% · {fmt_dur(time.monotonic() - t0)}")
 
         try:
             yield on_progress

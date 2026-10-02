@@ -34,7 +34,7 @@ if sys.platform == "darwin":
     os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 
 DIARIZE_MODEL = "pyannote/speaker-diarization-community-1"
-SENTENCE_END = (".", "?", "!", "…")
+SENTENCE_END = (".", "?", "!", "…", "。", "？", "！")
 MAX_TURN_SECONDS = 45  # split long monologues at a sentence end so timestamps stay frequent
 LANGS_WITHOUT_SPACES = {"ja", "zh"}
 CONFIG_ENV = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "meeting-transcriber" / ".env"
@@ -179,6 +179,19 @@ def load_env() -> None:
             load_dotenv(env)  # never overrides variables that are already set
 
 
+def use_cache_if_offline() -> None:
+    """Offline, huggingface_hub retries every cached model file (~6 min per run); one quick probe avoids that."""
+    if os.environ.get("HF_HUB_OFFLINE"):
+        return
+    import requests  # same proxy and CA settings as huggingface_hub
+
+    try:
+        requests.head(os.environ.get("HF_ENDPOINT") or "https://huggingface.co", timeout=5)
+    except requests.RequestException:
+        os.environ["HF_HUB_OFFLINE"] = "1"  # read by huggingface_hub at import time, so call this before importing it
+        console.print("[dim]No connection to Hugging Face: using cached models.[/]")
+
+
 def pick_devices(args: argparse.Namespace) -> tuple[str, str, str]:
     """(Whisper/alignment device, Whisper compute type, diarization device)."""
     import torch
@@ -189,6 +202,9 @@ def pick_devices(args: argparse.Namespace) -> tuple[str, str, str]:
     diarize = args.diarize_device
     if diarize == "auto":
         diarize = "cuda" if cuda else "mps" if torch.backends.mps.is_available() else "cpu"
+    if "cuda" in (asr, diarize) and not cuda:
+        sys.exit("CUDA isn't available: no NVIDIA GPU, or this PyTorch build has no CUDA support "
+                 "(PyTorch from PyPI is CPU-only on Windows). Use --device cpu --diarize-device auto.")
     return asr, compute, diarize
 
 
@@ -235,10 +251,16 @@ def load_diarizer(device: str):
 
     try:
         return DiarizationPipeline(model_name=DIARIZE_MODEL, token=os.getenv("HF_TOKEN") or None, device=device)
-    except Exception as e:  # noqa: BLE001 — almost always missing access to the gated model
+    except Exception as e:  # noqa: BLE001 — reported to the user below
+        from huggingface_hub.errors import RepositoryNotFoundError  # GatedRepoError: no token or terms not accepted
+
+        head = f"\nCould not load the speaker diarization model: {e.__class__.__name__}: {e}\n\n"
+        if not isinstance(e, RepositoryNotFoundError):
+            sys.exit(head + "Check the network connection (the first run downloads the model), "
+                     "or run without speaker labels: --no-diarize")
         sys.exit(
-            f"\nCould not load the speaker diarization model: {e.__class__.__name__}: {e}\n\n"
-            "Most likely there's no access to the gated model on Hugging Face:\n"
+            head +
+            "No access to the gated model on Hugging Face:\n"
             f"  1) accept the terms at https://huggingface.co/{DIARIZE_MODEL}\n"
             "  2) create a token (type: Read) at https://huggingface.co/settings/tokens\n"
             "  3) run `uvx --from huggingface_hub hf auth login`,\n"
@@ -248,7 +270,9 @@ def load_diarizer(device: str):
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = parse_args(argv)
+    args = parse_args(argv)  # --help and --version still go to stdout
+    # pyannote and torch.hub print() diagnostics; keep the real stdout for result paths only
+    result_out, sys.stdout = sys.stdout, sys.stderr
     load_env()
     if args.check:
         sys.exit(0 if check_setup(args) else 1)
@@ -262,6 +286,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
 
+    use_cache_if_offline()
     if not args.verbose:
         warnings.filterwarnings("ignore")
     import whisperx
@@ -314,6 +339,8 @@ def main(argv: list[str] | None = None) -> None:
         except Exception as e:  # noqa: BLE001 — network/download; alignment is optional, don't abort the run
             reason = escape(str(e) or e.__class__.__name__)
             console.print(f"  [yellow]![/] alignment model for '{language}' failed to load: {reason} — {fallback}")
+            if language in DEFAULT_ALIGN_MODELS_TORCH:  # torch.hub never re-checks a cached (possibly partial) file
+                console.print("    [dim]Interrupted download? Delete it from ~/.cache/torch/hub/checkpoints[/]")
         return align_models[language]
 
     if args.lang:  # language known upfront: load its alignment model with the others, not mid-way through a file
@@ -365,7 +392,7 @@ def main(argv: list[str] | None = None) -> None:
         turns = build_turns(result["segments"])
         base, n = args.out or path.parent, 2
         out_path = base / f"{path.stem}.txt"
-        while out_path in written:  # meeting.m4a + meeting.mp4, or same-named files with -o: don't overwrite
+        while out_path in written or out_path.exists():  # never overwrite: same-named inputs or an existing file
             out_path, n = base / f"{path.stem} ({n}).txt", n + 1
         written.add(out_path)
         out_path.write_text(render(turns, source=path.name, duration=duration, language=language), encoding="utf-8")
@@ -376,7 +403,7 @@ def main(argv: list[str] | None = None) -> None:
         summary.append(f"{fmt_dur(elapsed)} ({duration / elapsed:.1f}x realtime)")
         # soft_wrap: otherwise rich hard-wraps a long path and it can't be copied
         console.print(f"  [green]✓[/] {' · '.join(summary)} → [bold]{escape(short_path(out_path))}[/]", soft_wrap=True)
-        print(out_path.resolve(), flush=True)  # stdout carries only result paths, for scripts and agents
+        print(out_path.resolve(), file=result_out, flush=True)  # stdout carries only result paths
 
     t_start, failed = time.monotonic(), 0
     for i, path in enumerate(files, 1):
@@ -398,6 +425,8 @@ def main(argv: list[str] | None = None) -> None:
 
 def run() -> None:
     """Console-script entry point."""
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")  # result paths must survive non-UTF-8 pipes (Windows code pages)
     try:
         main()
     except KeyboardInterrupt:

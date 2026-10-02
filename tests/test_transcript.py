@@ -75,3 +75,10 @@ def test_parse_args_validation():
     with pytest.raises(SystemExit):
         parse_args([])  # no files and no --check
     assert parse_args(["--check"]).check
+
+
+def test_cjk_sentence_end_splits_long_monologue():
+    words = [word("字", i * 2.0, "A") for i in range(30)] + [word("。", 60.0, "A")]
+    words += [word("字", 62.0 + i, "A") for i in range(5)]
+    turns = build_turns([{"start": 0, "end": 70, "text": "x", "speaker": "A", "words": words}])
+    assert len(turns) == 2 and turns[0].parts[-1] == "。"
