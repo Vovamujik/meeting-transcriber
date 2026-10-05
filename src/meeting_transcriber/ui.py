@@ -32,6 +32,17 @@ def short_path(path: Path) -> str:
 
 
 @contextmanager
+def busy(text: str):
+    """A spinner while something slow runs with nothing else on screen; a plain line when stderr isn't a terminal."""
+    if console.is_interactive:
+        with console.status(text):
+            yield
+    else:
+        console.print(text)
+        yield
+
+
+@contextmanager
 def loading(label: str):
     """Model loading: prints "✓ label · time" once it's ready.
 

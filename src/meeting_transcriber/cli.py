@@ -18,7 +18,7 @@ from pathlib import Path
 from rich.markup import escape
 
 from . import __version__
-from .ui import Stages, console, fmt_dur, loading, short_path
+from .ui import Stages, busy, console, fmt_dur, loading, short_path
 
 # pyannote 4 sends anonymous usage telemetry by default; recordings are private, so turn it off before import.
 os.environ["PYANNOTE_METRICS_ENABLED"] = "false"
@@ -39,6 +39,10 @@ MAX_TURN_SECONDS = 45  # split long monologues at a sentence end so timestamps s
 LANGS_WITHOUT_SPACES = {"ja", "zh"}
 CONFIG_ENV = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "meeting-transcriber" / ".env"
 REPO_ENV = Path(__file__).resolve().parents[2] / ".env"  # .env in the root of a git checkout (src/ layout)
+LOGIN_HINT = "uvx --from huggingface_hub hf auth login"
+# Browser logins give OAuth tokens that expire, and the huggingface_hub version whisperx pins can't refresh them.
+LOGIN_ADVICE = f"`{LOGIN_HINT} --force` and choose \"Paste an access token\" (browser-login tokens expire)"
+SLOW_FIRST_RUN = "(the first run after installing or updating can take a few minutes)"
 FFMPEG_HINT = "macOS: brew install ffmpeg · Linux: sudo apt install ffmpeg · Windows: winget install Gyan.FFmpeg"
 
 # Transcript labels follow the recording's language; anything other than Russian gets English.
@@ -170,13 +174,123 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def load_env() -> None:
-    """HF_TOKEN lookup: env var → .env in the git checkout → ~/.config/meeting-transcriber/.env → `hf auth login`."""
+def hf_token_file() -> Path:
+    """Where `hf auth login` keeps the token: same resolution as huggingface_hub.constants.HF_TOKEN_PATH.
+
+    Computed by hand because importing huggingface_hub before use_cache_if_offline() would freeze its offline flag.
+    Call it after the .env files are loaded: they may set HF_HOME or HF_TOKEN_PATH.
+    """
+
+    def norm(path: str) -> str:
+        return os.path.expandvars(os.path.expanduser(path))
+
+    home = norm(os.environ.get("HF_HOME") or os.path.join(norm(os.environ.get("XDG_CACHE_HOME") or "~/.cache"),
+                                                          "huggingface"))
+    return Path(norm(os.environ.get("HF_TOKEN_PATH") or os.path.join(home, "token")))
+
+
+def clean_token(value: str | None) -> str:
+    """Same cleaning as huggingface_hub's get_token(): no line breaks, no surrounding spaces."""
+    return (value or "").replace("\r", "").replace("\n", "").strip()
+
+
+def http_status(e: BaseException) -> int | None:
+    return getattr(getattr(e, "response", None), "status_code", None)
+
+
+@dataclass
+class TokenSource:
+    label: str  # where the active token comes from, for messages
+    removal: str  # how to get rid of it
+
+
+def env_var_source(name: str) -> TokenSource:
+    if sys.platform == "win32":
+        removal = (f"remove the {name} environment variable (Settings → \"Edit environment variables for your "
+                   "account\", also check $PROFILE) and open a new terminal")
+    else:
+        removal = f"remove `export {name}=...` from your shell profile (~/.zshrc, ~/.bashrc) and open a new terminal"
+    return TokenSource(f"the {name} environment variable", removal)
+
+
+def load_env() -> TokenSource | None:
+    """Loads the .env files and says where the active Hugging Face token comes from (None: no token at all).
+
+    Same precedence as huggingface_hub: HF_TOKEN (environment, then .env in the git checkout, then
+    ~/.config/meeting-transcriber/.env) → HUGGING_FACE_HUB_TOKEN → the token saved by `hf auth login`.
+    The token value itself is never printed.
+    """
     from dotenv import load_dotenv
 
+    source = env_var_source("HF_TOKEN") if clean_token(os.environ.get("HF_TOKEN")) else None
     for env in (REPO_ENV, CONFIG_ENV):
         if env.is_file():
             load_dotenv(env)  # never overrides variables that are already set
+            if source is None and clean_token(os.environ.get("HF_TOKEN")):
+                where = short_path(env)
+                source = TokenSource(f"HF_TOKEN in {where}", f"delete the HF_TOKEN line from {where}")
+    if source is None and clean_token(os.environ.get("HUGGING_FACE_HUB_TOKEN")):
+        source = env_var_source("HUGGING_FACE_HUB_TOKEN")
+    if source is None and hf_token_file().is_file():
+        source = TokenSource("`hf auth login`", f"log in again: {LOGIN_ADVICE}")
+    return source
+
+
+@dataclass
+class Diagnosis:
+    kind: str  # "ok", "no-token", "invalid", "no-access" or "unknown" (couldn't check, e.g. offline)
+    message: str
+
+
+def diagnose_token(source: TokenSource | None) -> Diagnosis:
+    """Can the active token use the diarization model, and if not, why and what to do."""
+    from huggingface_hub import auth_check, get_token, whoami
+    from huggingface_hub.errors import GatedRepoError, HfHubHTTPError
+
+    token = get_token()
+    if not token or source is None:
+        return Diagnosis("no-token", "no Hugging Face token: speaker labels need one (see README); "
+                                     "--no-diarize works without")
+    try:
+        info = whoami(token=token)
+    except Exception as e:  # noqa: BLE001 — classified below
+        if http_status(e) != 401:
+            return Diagnosis("unknown", f"couldn't verify the Hugging Face token (offline?): {e.__class__.__name__}")
+        msg = f"the token from {source.label} is invalid or expired (HTTP 401)"
+        saved_file = hf_token_file()
+        saved = clean_token(saved_file.read_text()) if saved_file.is_file() else ""
+        if saved and saved != token:
+            try:
+                whoami(token=saved)
+                return Diagnosis("invalid",
+                                 f"{msg} and overrides your working `hf auth login` token — {source.removal}")
+            except Exception:  # noqa: BLE001 — the saved token doesn't work either
+                pass
+        if source.label == "`hf auth login`":
+            return Diagnosis("invalid", f"{msg} — {source.removal}")
+        return Diagnosis("invalid", f"{msg} — {source.removal}, then log in with {LOGIN_ADVICE}")
+
+    name = info.get("name", "?")
+    gated_access = ("\"Read access to contents of all public gated repos you can access\" "
+                    "(https://huggingface.co/settings/tokens)")
+    try:
+        auth_check(DIARIZE_MODEL, token=token)
+    except GatedRepoError:
+        msg = (f"the token from {source.label} works (account {name}) but has no access to the model — accept the "
+               f"terms at https://huggingface.co/{DIARIZE_MODEL} while logged in as {name}")
+        if info.get("auth", {}).get("accessToken", {}).get("role") == "fineGrained":
+            msg += f", and give this fine-grained token {gated_access}"
+        return Diagnosis("no-access", msg)
+    except HfHubHTTPError as e:
+        if http_status(e) == 403:  # a plain 403 (no GatedRepo code): typically a fine-grained token w/o gated access
+            return Diagnosis("no-access", f"the token from {source.label} works (account {name}) but isn't allowed to "
+                                          f"read {DIARIZE_MODEL} — give this fine-grained token {gated_access}, "
+                                          "or use a token of type Read")
+        return Diagnosis("unknown", f"couldn't verify access to {DIARIZE_MODEL}: {e.__class__.__name__}")
+    except Exception as e:  # noqa: BLE001 — network
+        return Diagnosis("unknown", f"couldn't verify access to {DIARIZE_MODEL} (offline?): {e.__class__.__name__}")
+    return Diagnosis("ok", f"Hugging Face token from {source.label} (account {name}), "
+                           f"access to {DIARIZE_MODEL} confirmed")
 
 
 def use_cache_if_offline() -> None:
@@ -208,11 +322,9 @@ def pick_devices(args: argparse.Namespace) -> tuple[str, str, str]:
     return asr, compute, diarize
 
 
-def check_setup(args: argparse.Namespace) -> bool:
+def check_setup(args: argparse.Namespace, token_source: TokenSource | None) -> bool:
     """--check: report what's ready and what's missing. Never prints the token itself."""
     import platform
-
-    from huggingface_hub import auth_check, get_token
 
     ok = True
 
@@ -228,54 +340,60 @@ def check_setup(args: argparse.Namespace) -> bool:
         ok = False
         report("fail", f"ffmpeg not found — {FFMPEG_HINT}")
 
-    asr, compute, diarize = pick_devices(args)
+    with busy(f"  checking devices… {SLOW_FIRST_RUN}"):
+        asr, compute, diarize = pick_devices(args)
     report("ok", f"Whisper on {asr} ({compute}), speaker diarization on {diarize}")
 
-    if not get_token():
-        report("warn", "no Hugging Face token: speaker labels need one (see README), --no-diarize works without")
-    else:
-        try:
-            auth_check(DIARIZE_MODEL)
-            report("ok", f"Hugging Face token found, access to {DIARIZE_MODEL} confirmed")
-        except Exception as e:  # noqa: BLE001 — gated (terms not accepted), invalid token or offline
-            name = e.__class__.__name__
-            hint = f"accept the terms at https://huggingface.co/{DIARIZE_MODEL}" if "Gated" in name or "401" in str(e) \
-                else "couldn't verify (offline?)"
-            report("warn", f"Hugging Face token found, but no access to {DIARIZE_MODEL}: {name} — {hint}")
+    with busy("  checking Hugging Face access…"):
+        diagnosis = diagnose_token(token_source)
+    report("ok" if diagnosis.kind == "ok" else "warn", diagnosis.message)
     console.print("  [dim]The first run downloads the models (~2–4 GB) into ~/.cache/huggingface.[/]")
     return ok
 
 
-def load_diarizer(device: str):
+def load_diarizer(device: str, token_source: TokenSource | None, verbose: bool):
+    import contextlib
+    import io
+    import re
+
+    from huggingface_hub import get_token
     from whisperx.diarize import DiarizationPipeline
 
+    # On a failed download pyannote print()s its own hints, with Python code; ours below fit a CLI better.
+    chatter = sys.stdout if verbose else io.StringIO()
     try:
-        return DiarizationPipeline(model_name=DIARIZE_MODEL, token=os.getenv("HF_TOKEN") or None, device=device)
+        with contextlib.redirect_stdout(chatter):
+            # the same cleaned token --check validates (a stray line break in a .env would break the HTTP header)
+            return DiarizationPipeline(model_name=DIARIZE_MODEL, token=get_token(), device=device)
     except Exception as e:  # noqa: BLE001 — reported to the user below
-        from huggingface_hub.errors import RepositoryNotFoundError  # GatedRepoError: no token or terms not accepted
+        from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
 
-        head = f"\nCould not load the speaker diarization model: {e.__class__.__name__}: {e}\n\n"
-        if not isinstance(e, RepositoryNotFoundError):
-            sys.exit(head + "Check the network connection (the first run downloads the model), "
-                     "or run without speaker labels: --no-diarize")
-        sys.exit(
-            head +
-            "No access to the gated model on Hugging Face:\n"
+        first_line = (str(e).strip().splitlines() or [""])[0]
+        details = "[details: " + re.sub(r"hf_\w+", "hf_***", f"{e.__class__.__name__}: {first_line}") + "]"
+        # hf_hub_download turns a plain 403 (e.g. a fine-grained token) into LocalEntryNotFoundError
+        forbidden = isinstance(e.__cause__, HfHubHTTPError) and http_status(e.__cause__) == 403
+        if not (isinstance(e, RepositoryNotFoundError) or forbidden):
+            sys.exit(f"\nCould not load the speaker diarization model. Check the network connection (the first run "
+                     f"downloads it), or run without speaker labels: --no-diarize\n{details}")
+        diagnosis = diagnose_token(token_source)
+        steps = "" if diagnosis.kind in ("invalid", "no-access") else (
+            "Access takes three steps:\n"
             f"  1) accept the terms at https://huggingface.co/{DIARIZE_MODEL}\n"
             "  2) create a token (type: Read) at https://huggingface.co/settings/tokens\n"
-            "  3) run `uvx --from huggingface_hub hf auth login`,\n"
+            f"  3) run {LOGIN_ADVICE},\n"
             "     or put HF_TOKEN=hf_... into ~/.config/meeting-transcriber/.env\n"
-            "Or run without speaker labels: --no-diarize"
         )
+        sys.exit(f"\nNo access to the speaker diarization model: {diagnosis.message}.\n\n{steps}"
+                 f"Or run without speaker labels: --no-diarize\n{details}")
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)  # --help and --version still go to stdout
     # pyannote and torch.hub print() diagnostics; keep the real stdout for result paths only
     result_out, sys.stdout = sys.stdout, sys.stderr
-    load_env()
+    token_source = load_env()
     if args.check:
-        sys.exit(0 if check_setup(args) else 1)
+        sys.exit(0 if check_setup(args, token_source) else 1)
     if not shutil.which("ffmpeg"):
         sys.exit(f"ffmpeg not found. Install it — {FFMPEG_HINT}")
 
@@ -286,16 +404,19 @@ def main(argv: list[str] | None = None) -> None:
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
 
-    use_cache_if_offline()
     if not args.verbose:
         warnings.filterwarnings("ignore")
-    import whisperx
-    from rich.logging import RichHandler
-    from whisperx.alignment import DEFAULT_ALIGN_MODELS_HF, DEFAULT_ALIGN_MODELS_TORCH
-    from whisperx.audio import SAMPLE_RATE
-    from whisperx.diarize import assign_word_speakers
-    from whisperx.log_utils import setup_logging
-    from whisperx.utils import LANGUAGES
+    # Importing torch/whisperx takes seconds, and minutes on the first run after an install (Python compiles the
+    # packages): show that something is happening instead of an empty terminal.
+    with busy(f"Starting… {SLOW_FIRST_RUN}"):
+        use_cache_if_offline()
+        import whisperx
+        from rich.logging import RichHandler
+        from whisperx.alignment import DEFAULT_ALIGN_MODELS_HF, DEFAULT_ALIGN_MODELS_TORCH
+        from whisperx.audio import SAMPLE_RATE
+        from whisperx.diarize import assign_word_speakers
+        from whisperx.log_utils import setup_logging
+        from whisperx.utils import LANGUAGES
 
     if args.lang:
         args.lang = args.lang.strip().lower()
@@ -316,7 +437,7 @@ def main(argv: list[str] | None = None) -> None:
     diarizer = None
     if not args.no_diarize:
         with loading(f"speaker diarization (pyannote, {diarize_device})"):
-            diarizer = load_diarizer(diarize_device)
+            diarizer = load_diarizer(diarize_device, token_source, args.verbose)
     with loading(f"whisper {args.model} ({asr_device}, {compute_type})"):
         asr = whisperx.load_model(
             args.model, asr_device, compute_type=compute_type, language=args.lang, threads=args.threads,

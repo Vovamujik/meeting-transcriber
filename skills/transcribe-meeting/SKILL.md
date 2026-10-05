@@ -17,7 +17,7 @@ Runs the `meeting-transcriber` CLI on the user's machine. Audio never leaves the
 bash "$SKILL_DIR/scripts/run.sh" <files...> [options]
 ```
 
-Without bash (plain Windows): `uvx --from git+https://github.com/Vovamujik/meeting-transcriber@v0.1.0 meeting-transcriber <files...> [options]`.
+Without bash (plain Windows): `uvx --from git+https://github.com/Vovamujik/meeting-transcriber@v0.1.1 meeting-transcriber <files...> [options]`.
 
 ## 1. Check the setup (once per session)
 
@@ -29,12 +29,14 @@ The very first call installs the Python dependencies (~1–2 GB, several GB on L
 
 - `✗ ffmpeg not found` → show the user the install command it prints. Don't install system packages without asking.
 - `uv is not installed` → point the user to https://docs.astral.sh/uv/getting-started/installation/.
-- `! no Hugging Face token` or `no access to pyannote/...` → speaker labels won't work. Ask the user to:
+- `! no Hugging Face token` → speaker labels won't work. Ask the user to:
   1. accept the model terms at https://huggingface.co/pyannote/speaker-diarization-community-1,
   2. create a token of type Read at https://huggingface.co/settings/tokens,
-  3. run `uvx --from huggingface_hub hf auth login` in their own terminal, or put `HF_TOKEN=...` into `~/.config/meeting-transcriber/.env`.
+  3. run `uvx --from huggingface_hub hf auth login` in their own terminal and choose "Paste an access token" (browser-login tokens expire), or put `HF_TOKEN=...` into `~/.config/meeting-transcriber/.env`.
+- Any other `!` line about the Hugging Face token (`invalid or expired`, `has no access`, `isn't allowed to read`) → show it to the user as printed: it names where the token comes from (an environment variable, a `.env` file or `hf auth login`) and the fix. Logging in again doesn't help while an old `HF_TOKEN` environment variable is set. If it names an environment variable, your own process keeps the old value even after the user removes it: re-check with `env -u HF_TOKEN bash "$SKILL_DIR/scripts/run.sh" --check` (and run the transcription the same way), or ask the user to restart the agent from a new terminal.
+- `couldn't verify … (offline?)` → a network problem, not a token problem.
 
-  Never ask for the token in chat, never print or `cat` any `.env` file, never put a token on a command line. If the user doesn't want speaker labels, run with `--no-diarize` instead.
+Never ask for the token in chat, never print or `cat` any `.env` file or shell profile, never put a token on a command line, and don't edit the user's shell profile yourself. If the user doesn't want speaker labels, run with `--no-diarize` instead.
 
 ## 2. Transcribe
 
@@ -79,7 +81,9 @@ Russian recordings get Russian labels (`Спикер 1`, `Файл:`). Then:
 
 ## Troubleshooting
 
-- `401`, `403` or `GatedRepoError` → token missing or model terms not accepted (step 1).
+- `401`, `403` or `GatedRepoError` → run `--check`; it names the token's source and the exact problem (step 1).
+- `invalid or expired (HTTP 401)` right after the user ran `hf auth login` → an old `HF_TOKEN` in their shell profile or a `.env` file overrides it. Tell the user which file `--check` names; don't edit their shell profile yourself.
+- The first run after installing or updating shows `Starting…` for up to a few minutes while Python compiles the packages.
 - Out of memory → `-m medium` or `--batch-size 4`.
 - NVIDIA GPU errors (CUDA/cuDNN) → `--device cpu --diarize-device cpu` works everywhere.
 - Silence can produce phantom phrases like "Thank you." — a known Whisper quirk.

@@ -79,7 +79,7 @@ uv run meeting-transcriber --help
 1. Прими условия на [странице модели](https://huggingface.co/pyannote/speaker-diarization-community-1).
 2. Создай токен с типом **Read**: <https://huggingface.co/settings/tokens>.
 3. Передай его тулзе любым способом:
-   - `uvx --from huggingface_hub hf auth login` (токен сохранится для всех инструментов Hugging Face);
+   - `uvx --from huggingface_hub hf auth login` и выбери **Paste an access token** (токен сохранится для всех инструментов Hugging Face; токены от входа через браузер истекают, а эта тулза не умеет их обновлять);
    - положи `HF_TOKEN=hf_...` в `~/.config/meeting-transcriber/.env` (шаблон: [.env.example](.env.example));
    - при запуске из клона: файл `.env` в корне репозитория;
    - `export HF_TOKEN=hf_...` в терминале.
@@ -93,10 +93,10 @@ meeting-transcriber --check
 ```
 
 ```
-meeting-transcriber 0.1.0 · Python 3.12.6 · Darwin arm64
+meeting-transcriber 0.1.1 · Python 3.12.6 · Darwin arm64
   ✓ ffmpeg: /opt/homebrew/bin/ffmpeg
   ✓ Whisper on cpu (int8), speaker diarization on mps
-  ✓ Hugging Face token found, access to pyannote/speaker-diarization-community-1 confirmed
+  ✓ Hugging Face token from `hf auth login` (account you), access to pyannote/speaker-diarization-community-1 confirmed
 ```
 
 ## Запуск
@@ -194,7 +194,9 @@ npx skills add Vovamujik/meeting-transcriber -g
 
 | Проблема | Что делать |
 |---|---|
-| `GatedRepoError`, `401`, `403` | Не приняты условия модели или нет токена. См. [Токен Hugging Face](#токен-hugging-face-для-разделения-по-спикерам) и запусти `--check`. |
+| `GatedRepoError`, `401`, `403` | Запусти `--check`: он покажет, откуда взят токен и что с ним не так (нет токена, токен недействителен, условия не приняты на этом аккаунте, fine-grained токен без доступа к gated-репозиториям). См. [Токен Hugging Face](#токен-hugging-face-для-разделения-по-спикерам). |
+| Токен «invalid or expired (HTTP 401)» сразу после `hf auth login` | Старый `HF_TOKEN`, экспортированный в профиле терминала (`~/.zshrc`, `~/.bashrc`; на Windows — переменная окружения пользователя) или записанный в `.env`, главнее токена от `hf auth login`. Удали его и открой новый терминал; `--check` покажет, откуда он берётся. |
+| Долго висит «Starting…» | Первый запуск после установки или обновления компилирует Python-пакеты: до нескольких минут, один раз. |
 | `ffmpeg not found` | Поставь ffmpeg (см. [Требования](#требования)). |
 | `CERTIFICATE_VERIFY_FAILED` | На macOS исправляется автоматически. За корпоративным прокси укажи в `SSL_CERT_FILE` и `REQUESTS_CA_BUNDLE` сертификаты компании. |
 | Скачивание зависло или медленное | Загрузка продолжается с места остановки: прерви по Ctrl+C и запусти снова. |

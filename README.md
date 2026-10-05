@@ -82,7 +82,7 @@ The speaker diarization model [pyannote/speaker-diarization-community-1](https:/
 1. Accept the terms on the [model page](https://huggingface.co/pyannote/speaker-diarization-community-1).
 2. Create a token of type **Read** at <https://huggingface.co/settings/tokens>.
 3. Give it to the tool, one of:
-   - `uvx --from huggingface_hub hf auth login` (stores it for all Hugging Face tools);
+   - `uvx --from huggingface_hub hf auth login`, then choose **Paste an access token** (stores it for all Hugging Face tools; tokens from the browser login expire, and this tool can't refresh them);
    - put `HF_TOKEN=hf_...` into `~/.config/meeting-transcriber/.env` (template: [.env.example](.env.example));
    - when running from a clone: a `.env` file in the repository root;
    - `export HF_TOKEN=hf_...` in your shell.
@@ -96,10 +96,10 @@ meeting-transcriber --check
 ```
 
 ```
-meeting-transcriber 0.1.0 · Python 3.12.6 · Darwin arm64
+meeting-transcriber 0.1.1 · Python 3.12.6 · Darwin arm64
   ✓ ffmpeg: /opt/homebrew/bin/ffmpeg
   ✓ Whisper on cpu (int8), speaker diarization on mps
-  ✓ Hugging Face token found, access to pyannote/speaker-diarization-community-1 confirmed
+  ✓ Hugging Face token from `hf auth login` (account you), access to pyannote/speaker-diarization-community-1 confirmed
 ```
 
 ## Usage
@@ -195,7 +195,9 @@ Measured on an Apple M3 Pro (18 GB), `large-v3-turbo`, 3-minute two-speaker reco
 
 | Problem | Fix |
 |---|---|
-| `GatedRepoError`, `401`, `403` | The model terms aren't accepted or the token is missing. See [Hugging Face token](#hugging-face-token-for-speaker-labels) and run `--check`. |
+| `GatedRepoError`, `401`, `403` | Run `--check`: it says where the active token comes from and what's wrong with it (missing, invalid, terms not accepted for that account, fine-grained token without gated access). See [Hugging Face token](#hugging-face-token-for-speaker-labels). |
+| Token "invalid or expired (HTTP 401)" right after `hf auth login` | An old `HF_TOKEN` exported in your shell profile (`~/.zshrc`, `~/.bashrc`; on Windows, a user environment variable) or set in a `.env` file wins over the `hf auth login` token. Remove it and open a new terminal; `--check` names where it comes from. |
+| Long "Starting…" | The first run after installing or updating compiles the Python packages: up to a few minutes, once. |
 | `ffmpeg not found` | Install ffmpeg (see [Requirements](#requirements)). |
 | `CERTIFICATE_VERIFY_FAILED` | Handled automatically on macOS. Behind a corporate proxy, point `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` to your company's CA bundle. |
 | Download stuck or slow | Downloads resume where they stopped: interrupt with Ctrl+C and run again. |
