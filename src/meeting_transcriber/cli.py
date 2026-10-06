@@ -9,6 +9,7 @@ import argparse
 import logging
 import os
 import shutil
+import signal
 import sys
 import time
 import warnings
@@ -17,7 +18,7 @@ from pathlib import Path
 
 from rich.markup import escape
 
-from . import __version__
+from . import __version__, media
 from .ui import Stages, busy, console, fmt_dur, loading, short_path
 
 # pyannote 4 sends anonymous usage telemetry by default; recordings are private, so turn it off before import.
@@ -339,6 +340,9 @@ def check_setup(args: argparse.Namespace, token_source: TokenSource | None) -> b
     else:
         ok = False
         report("fail", f"ffmpeg not found — {FFMPEG_HINT}")
+    if not shutil.which("ffprobe"):
+        report("warn", "ffprobe not found (it normally comes with ffmpeg): from recordings with several audio tracks "
+                       "only the first one is used")
 
     with busy(f"  checking devices… {SLOW_FIRST_RUN}"):
         asr, compute, diarize = pick_devices(args)
@@ -396,6 +400,9 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(0 if check_setup(args, token_source) else 1)
     if not shutil.which("ffmpeg"):
         sys.exit(f"ffmpeg not found. Install it — {FFMPEG_HINT}")
+    if not shutil.which("ffprobe"):
+        console.print("[yellow]![/] ffprobe not found (it normally comes with ffmpeg): from recordings with several "
+                      "audio tracks only one is used")
 
     files = [f.expanduser().resolve() for f in args.files]
     missing = [str(f) for f in files if not f.is_file()]
@@ -413,7 +420,6 @@ def main(argv: list[str] | None = None) -> None:
         import whisperx
         from rich.logging import RichHandler
         from whisperx.alignment import DEFAULT_ALIGN_MODELS_HF, DEFAULT_ALIGN_MODELS_TORCH
-        from whisperx.audio import SAMPLE_RATE
         from whisperx.diarize import assign_word_speakers
         from whisperx.log_utils import setup_logging
         from whisperx.utils import LANGUAGES
@@ -471,20 +477,28 @@ def main(argv: list[str] | None = None) -> None:
 
     def process(path: Path) -> None:
         t0 = time.monotonic()
-        with console.status("  reading audio…"):
-            try:
-                audio = whisperx.load_audio(str(path))
-            except RuntimeError as e:  # carries ffmpeg's whole stderr; the gist is usually the last line
-                msg = str(e)
-                reason = "no audio track" if "does not contain any stream" in msg else msg.strip().splitlines()[-1]
-                raise RuntimeError(f"ffmpeg couldn't read the file: {reason}") from None
-        duration = len(audio) / SAMPLE_RATE
+        info = media.probe(path)  # None without ffprobe: then just the first audio track, no progress
+        if info and not info.audio_tracks:
+            if info.undecodable_audio:
+                raise RuntimeError("no audio track ffmpeg can decode")
+            raise RuntimeError(f"no audio track in {'the video' if info.has_video else 'the file'}")
+        with Stages([("extract", "Extract audio")]) as st, st.run("extract") as cb:
+            audio = media.load_audio(path, info, cb)
+        duration = len(audio) / media.SAMPLE_RATE
         language = args.lang or asr.preset_language  # *.en models are fixed to English and can't detect language
         auto = not language
         if auto:
             with console.status("  detecting language…"):
                 language = asr.detect_language(audio)
-        console.print(f"  [dim]{fmt_dur(duration)} · language {language}{' (auto)' if auto else ''}[/]")
+        kind = ["video"] if info and info.has_video else []
+        if info and info.audio_tracks > 1:
+            kind.append(f"{info.audio_tracks} audio tracks mixed")
+        if info and info.undecodable_audio:
+            kind.append(f"{info.undecodable_audio} undecodable audio track(s) skipped")
+        parts = [fmt_dur(duration), f"language {language}{' (auto)' if auto else ''}"]
+        if kind:
+            parts.append(", ".join(kind))
+        console.print(f"  [dim]{' · '.join(parts)}[/]")
 
         align = get_align_model(language)
         stages = [("asr", "Transcribe")]
@@ -544,8 +558,16 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
 
+def exit_cleanly_on_termination() -> None:
+    """SIGTERM/SIGHUP (terminal closed, agent stopped) → a normal exit, so ffmpeg and temp files get cleaned up."""
+    for name in ("SIGTERM", "SIGHUP"):  # no SIGHUP on Windows
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), lambda signum, _frame: sys.exit(128 + signum))
+
+
 def run() -> None:
     """Console-script entry point."""
+    exit_cleanly_on_termination()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # result paths must survive non-UTF-8 pipes (Windows code pages)
     try:

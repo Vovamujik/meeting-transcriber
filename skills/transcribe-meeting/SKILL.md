@@ -1,6 +1,6 @@
 ---
 name: transcribe-meeting
-description: Transcribes meeting, call, interview or voice-note recordings (mp3, m4a, wav, ogg, mp4, mov, webm…) locally with WhisperX and pyannote speaker diarization into an LLM-ready .txt with timestamps and speaker labels. Use when the user asks to transcribe or diarize a recording, or wants a summary, minutes, decisions or action items from an audio/video file (e.g. "transcribe this call", "расшифруй встречу").
+description: Transcribes meeting, call, interview or voice-note recordings, audio or video (mp3, m4a, wav, ogg, mp4, mov, mkv, webm…) locally with WhisperX and pyannote speaker diarization into an LLM-ready .txt with timestamps and speaker labels. Use when the user asks to transcribe or diarize a recording, or wants a summary, minutes, decisions or action items from an audio/video file (e.g. "transcribe this call", "расшифруй встречу").
 license: MIT
 compatibility: Local coding agents only (Claude Code, Codex, Cursor, Copilot, Gemini CLI, OpenCode), not claude.ai. Needs uv, git, ffmpeg and ~5 GB of disk (~11 GB on Linux x86_64); macOS 14+ on Apple Silicon, Linux or Windows. Speaker labels need a Hugging Face token.
 metadata:
@@ -17,7 +17,7 @@ Runs the `meeting-transcriber` CLI on the user's machine. Audio never leaves the
 bash "$SKILL_DIR/scripts/run.sh" <files...> [options]
 ```
 
-Without bash (plain Windows): `uvx --from git+https://github.com/Vovamujik/meeting-transcriber@v0.1.1 meeting-transcriber <files...> [options]`.
+Without bash (plain Windows): `uvx --from git+https://github.com/Vovamujik/meeting-transcriber@v0.2.0 meeting-transcriber <files...> [options]`.
 
 ## 1. Check the setup (once per session)
 
@@ -39,6 +39,8 @@ The very first call installs the Python dependencies (~1–2 GB, several GB on L
 Never ask for the token in chat, never print or `cat` any `.env` file or shell profile, never put a token on a command line, and don't edit the user's shell profile yourself. If the user doesn't want speaker labels, run with `--no-diarize` instead.
 
 ## 2. Transcribe
+
+Video files work as is: pass them directly and don't extract the audio yourself. Recordings with several audio tracks (e.g. OBS with the microphone and desktop audio apart) are mixed automatically.
 
 Choose options from what the user told you:
 

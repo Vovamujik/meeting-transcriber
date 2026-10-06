@@ -1,6 +1,6 @@
 [project]
 name = "meeting-transcriber"
-version = "0.1.1"
+version = "0.2.0"
 description = "Transcribe meeting recordings locally into a timestamped, speaker-labelled .txt for LLMs (WhisperX + pyannote)"
 readme = "README.md"
 license = "MIT"

@@ -12,6 +12,7 @@ from rich.table import Column
 from rich.text import Text
 
 console = Console(stderr=True, highlight=False)
+LABEL_WIDTH = 13  # longest stage label: "Extract audio"
 
 
 def fmt_dur(sec: float) -> str:
@@ -107,7 +108,8 @@ class Stages:
         self.progress = Progress(
             TextColumn(" "),
             StageIcon(),
-            TextColumn("{task.description}"),
+            # fixed width so the separate "Extract audio" table lines up with the stage table below it
+            TextColumn("{task.description}", table_column=Column(width=LABEL_WIDTH)),
             StageBar(bar_width=30),
             # in a narrow terminal shrink the bar rather than wrapping the stats onto a new line
             StageStats(table_column=Column(no_wrap=True)),

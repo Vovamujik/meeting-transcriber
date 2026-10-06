@@ -2,9 +2,9 @@
 
 [English](README.md) · **Русский**
 
-Локальная расшифровка записей встреч в текст с таймкодами и разделением по спикерам. Результат готов к тому, чтобы закинуть его в ChatGPT, Claude или любую другую нейронку. Под капотом [WhisperX](https://github.com/m-bain/whisperX) (распознавание речи и выравнивание по словам) и [pyannote](https://github.com/pyannote/pyannote-audio) (кто когда говорит).
+Локальная расшифровка встреч с разделением по спикерам и [Agent Skill](https://agentskills.io) для Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI и OpenCode.
 
-Работает как консольная утилита и как [Agent Skill](https://agentskills.io) для Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI и OpenCode. Можно просто попросить агента: «расшифруй созвон и выпиши задачи».
+Дай агенту запись или видео созвона и попроси саммари, протокол или список задач. Он расшифрует всё **на твоём компьютере** с помощью [WhisperX](https://github.com/m-bain/whisperX) и [pyannote](https://github.com/pyannote/pyannote-audio) и будет работать с такой расшифровкой:
 
 ```
 Файл: planning.m4a
@@ -20,24 +20,11 @@
 [00:00:16] Спикер 1: Успеем до пятницы?
 ```
 
-- **Приватно.** Аудио не покидает компьютер. Из сети при первом запуске скачиваются только веса моделей; телеметрия pyannote отключена.
-- **Спикеры привязаны к словам.** Каждое слово выравнивается по времени и получает своего спикера, поэтому реплики режутся правильно, даже когда люди перебивают друг друга.
-- **Удобно для нейронок.** Подряд идущие фразы одного человека склеиваются в реплику, длинный монолог делится на абзацы примерно раз в 45 секунд.
-- **Любой формат, который читает ffmpeg**: m4a, mp3, wav, ogg, flac, mp4, mov, webm…
-- **Использует видеокарту**, где может: NVIDIA (CUDA) на Linux для всего, GPU Apple Silicon для разделения по спикерам. На Windows всё идёт на CPU (PyTorch с PyPI там без CUDA).
-- **Понятный прогресс**: этапы с полосами и оценкой оставшегося времени; битый файл не останавливает пачку.
+## Подключить скил к агенту
 
-## Требования
+Четыре шага. Агент должен работать на твоём компьютере (Claude Code, Codex, Cursor, …): в claude.ai и других облачных песочницах модели не скачать.
 
-| | |
-|---|---|
-| ОС | macOS 14+ на Apple Silicon, Linux, Windows. Mac на Intel не поддерживается (под него нет сборок PyTorch). |
-| Инструменты | [uv](https://docs.astral.sh/uv/getting-started/installation/), [ffmpeg](https://ffmpeg.org/download.html) и [git](https://git-scm.com/downloads) (через него uv ставит пакет с GitHub). Нужный Python uv поставит сам. |
-| Диск | ~2 ГБ на Python-пакеты (~7,5 ГБ на Linux x86_64, там PyTorch идёт с CUDA) + 2–4 ГБ на модели |
-| Память | минимум 8 ГБ, лучше 16 ГБ |
-| Разделение по спикерам | бесплатный аккаунт и токен [Hugging Face](https://huggingface.co) (см. ниже) |
-
-Установка инструментов:
+### 1. Поставь uv, ffmpeg и git
 
 ```bash
 # macOS
@@ -53,15 +40,99 @@ winget install Gyan.FFmpeg
 winget install Git.Git
 ```
 
-## Установка
+| Что нужно | |
+|---|---|
+| ОС | macOS 14+ на Apple Silicon, Linux или Windows. Mac на Intel не поддерживается (под него нет сборок PyTorch). |
+| Инструменты | [uv](https://docs.astral.sh/uv/getting-started/installation/) (нужный Python поставит сам), [ffmpeg](https://ffmpeg.org/download.html) вместе с ffprobe (он есть в любой стандартной сборке), [git](https://git-scm.com/downloads) |
+| Диск | ~2 ГБ на Python-пакеты (~7,5 ГБ на Linux x86_64, там PyTorch идёт с CUDA) + 2–4 ГБ на модели |
+| Память | минимум 8 ГБ, лучше 16 ГБ |
 
-Как глобальная команда (рекомендуется):
+### 2. Получи токен Hugging Face (для разделения по спикерам)
+
+Кто что сказал, определяет модель [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1). Она бесплатная, но закрыта соглашением: один раз нужно принять условия, в том числе согласиться передать свои контакты команде pyannote.
+
+1. Заведи бесплатный аккаунт на [Hugging Face](https://huggingface.co) и прими условия на [странице модели](https://huggingface.co/pyannote/speaker-diarization-community-1).
+2. Создай токен с типом **Read**: <https://huggingface.co/settings/tokens>.
+3. Сохрани его в терминале:
+   ```bash
+   uvx --from huggingface_hub hf auth login
+   ```
+   Выбери **Paste an access token** и вставь токен. (Токены от входа через браузер истекают, а эта тулза не умеет их обновлять.)
+
+Другие способы передать токен: `HF_TOKEN=hf_...` в `~/.config/meeting-transcriber/.env` (шаблон: [.env.example](.env.example)) или `export HF_TOKEN=hf_...`. Никогда не вставляй токен в чат с агентом.
+
+Нет токена? Пропусти шаг: агент расшифрует запись без разделения по спикерам.
+
+### 3. Подключи скил
+
+**Claude Code** (как плагин), внутри сессии:
+
+```
+/plugin marketplace add Vovamujik/meeting-transcriber
+/plugin install meeting-transcriber@vovamujik
+```
+
+**Любой агент** (Claude Code, Codex, Cursor, Copilot, Gemini CLI, OpenCode, …) через [`skills`](https://github.com/vercel-labs/skills):
+
+```bash
+npx skills add Vovamujik/meeting-transcriber -g
+```
+
+Или скопируй [`skills/transcribe-meeting`](skills/transcribe-meeting/SKILL.md) в папку скилов своего агента (для Claude Code это `~/.claude/skills/`). После этого перезапусти агента.
+
+### 4. Попроси агента
+
+> Расшифруй ~/Downloads/планёрка.m4a и сделай протокол.
+
+> Вот вчерашний созвон: ~/Movies/call.mov. Нас было четверо. Выпиши решения и задачи с ответственными.
+
+> Transcribe ~/Downloads/standup.m4a and list the action items with owners.
+
+Что произойдёт:
+
+1. Агент проверит окружение (ffmpeg, токен, устройства) и скажет, если чего-то не хватает.
+2. **Первый запуск долгий**: ставятся Python-пакеты и скачиваются модели (10+ минут). Дальше всё стартует за секунды и работает без интернета.
+3. Расшифровка идёт в фоне, примерно треть длины записи на Mac с Apple Silicon (час ≈ 20 минут), на видеокартах NVIDIA сильно быстрее.
+4. Расшифровка сохранится рядом с записью (`call.txt`), и агент ответит на твой запрос по ней.
+
+Советы: скажи язык и сколько было людей, подскажи, кто есть кто («Спикер 1 — это Аня»). Видео подходит как есть, конвертировать заранее не нужно.
+
+Хочешь проверить окружение сам, до того как просить агента?
+
+```bash
+uvx --from git+https://github.com/Vovamujik/meeting-transcriber meeting-transcriber --check
+```
+
+```
+meeting-transcriber 0.2.0 · Python 3.12.6 · Darwin arm64
+  ✓ ffmpeg: /opt/homebrew/bin/ffmpeg
+  ✓ Whisper on cpu (int8), speaker diarization on mps
+  ✓ Hugging Face token from `hf auth login` (account you), access to pyannote/speaker-diarization-community-1 confirmed
+```
+
+## Что умеет
+
+- **Приватно.** Аудио не покидает компьютер. Из сети при первом запуске скачиваются только веса моделей; телеметрия pyannote отключена.
+- **Аудио или видео.** m4a, mp3, wav, ogg, flac, mp4, mov, mkv, webm — всё, что читает ffmpeg. Из видео звук достаётся автоматически, а если звуковых дорожек несколько (например, OBS, где микрофон и звук системы пишутся на разные дорожки), они смешиваются, чтобы никто не потерялся.
+- **Спикеры привязаны к словам.** Каждое слово выравнивается по времени и получает своего спикера, поэтому реплики режутся правильно, даже когда люди перебивают друг друга.
+- **Удобно для нейронок.** Подряд идущие фразы одного человека склеиваются в реплику, длинный монолог делится на абзацы примерно раз в 45 секунд.
+- **Использует видеокарту**, где может: NVIDIA (CUDA) на Linux для всего, GPU Apple Silicon для разделения по спикерам. На Windows всё идёт на CPU (PyTorch с PyPI там без CUDA).
+
+Про формат расшифровки:
+
+- Короткая шапка (файл, длительность, язык, число спикеров), дальше по абзацу на реплику: `[ЧЧ:ММ:СС] Спикер N: текст`.
+- Спикеры нумеруются по первому появлению. Имён тулза не знает, поэтому подскажи нейронке, кто есть кто.
+- Подписи зависят от языка записи: для русского `Спикер 1`, `Файл:` и так далее, для всех остальных языков английские. Сообщения в терминале на английском, как принято в open source.
+
+## Командная строка (без агента)
+
+Шаги 1 и 2 выше нужны и здесь. Потом поставь команду:
 
 ```bash
 uv tool install git+https://github.com/Vovamujik/meeting-transcriber
 ```
 
-Или из клона, если хочешь менять код:
+Или из клона, если хочешь менять код (тогда запускай команды ниже через `uv run`):
 
 ```bash
 git clone https://github.com/Vovamujik/meeting-transcriber
@@ -70,36 +141,7 @@ uv sync
 uv run meeting-transcriber --help
 ```
 
-Из клона запускай команды ниже через `uv run` (например, `uv run meeting-transcriber --check`).
-
-## Токен Hugging Face (для разделения по спикерам)
-
-Модель [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) бесплатная, но закрыта соглашением: один раз нужно принять условия, в том числе согласиться передать свои контакты команде pyannote.
-
-1. Прими условия на [странице модели](https://huggingface.co/pyannote/speaker-diarization-community-1).
-2. Создай токен с типом **Read**: <https://huggingface.co/settings/tokens>.
-3. Передай его тулзе любым способом:
-   - `uvx --from huggingface_hub hf auth login` и выбери **Paste an access token** (токен сохранится для всех инструментов Hugging Face; токены от входа через браузер истекают, а эта тулза не умеет их обновлять);
-   - положи `HF_TOKEN=hf_...` в `~/.config/meeting-transcriber/.env` (шаблон: [.env.example](.env.example));
-   - при запуске из клона: файл `.env` в корне репозитория;
-   - `export HF_TOKEN=hf_...` в терминале.
-
-Спикеры не нужны? Пропусти этот шаг и запускай с `--no-diarize`.
-
-Проверить всё разом:
-
-```bash
-meeting-transcriber --check
-```
-
-```
-meeting-transcriber 0.1.1 · Python 3.12.6 · Darwin arm64
-  ✓ ffmpeg: /opt/homebrew/bin/ffmpeg
-  ✓ Whisper on cpu (int8), speaker diarization on mps
-  ✓ Hugging Face token from `hf auth login` (account you), access to pyannote/speaker-diarization-community-1 confirmed
-```
-
-## Запуск
+Запуск:
 
 ```bash
 meeting-transcriber ~/Downloads/meeting.m4a --lang ru
@@ -113,6 +155,9 @@ meeting-transcriber ~/Recordings/*.m4a --lang ru -o transcripts
 
 # известно, сколько людей на встрече: спикеры определятся точнее
 meeting-transcriber call.mp4 --lang ru --speakers 4
+
+# видео подходит как есть: звук достаётся автоматически
+meeting-transcriber ~/Movies/zoom-call.mov --lang ru
 
 # максимальная точность (в 2–3 раза медленнее)
 meeting-transcriber call.mp4 --lang ru --model large-v3
@@ -129,8 +174,9 @@ Loading models
   ✓ whisper large-v3-turbo (cpu, int8) · 2.3s
   ✓ alignment (ru) · 3.7s
 
-[1/2] planning.m4a
-  42:13 · language ru
+[1/2] planning.mp4
+  ✓ Extract audio ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%  0:14
+  42:13 · language ru · video, 2 audio tracks mixed
   ✓ Transcribe    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%  9:12
   ⠴ Align words   ━━━━━━━━━━━━━━━━━━╸━━━━━━━━━━━  62%  1:05  ~0:40 left
   · Speakers      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -155,37 +201,6 @@ Loading models
 
 Коды выхода: `0` все файлы готовы, `1` хотя бы один упал (остальные всё равно обрабатываются), `130` прервано.
 
-### Формат расшифровки
-
-- Короткая шапка (файл, длительность, язык, число спикеров), дальше по абзацу на реплику: `[ЧЧ:ММ:СС] Спикер N: текст`.
-- Спикеры нумеруются по первому появлению. Имён тулза не знает, поэтому подскажи нейронке, кто есть кто: «Спикер 1 — это Аня, она ведёт встречу».
-- Подписи зависят от языка записи: для русского `Спикер 1`, `Файл:` и так далее, для всех остальных языков английские.
-
-Сообщения в терминале на английском, как принято в open source.
-
-## Использование с агентами
-
-В репозитории есть [Agent Skill](https://agentskills.io): [`skills/transcribe-meeting`](skills/transcribe-meeting/SKILL.md). Он объясняет агенту, как проверить окружение, запустить расшифровку в фоне и потом работать с текстом: саммари, протокол, задачи. uv, ffmpeg и токен Hugging Face для спикеров всё равно нужны.
-
-**Claude Code** (как плагин):
-
-```
-/plugin marketplace add Vovamujik/meeting-transcriber
-/plugin install meeting-transcriber@vovamujik
-```
-
-**Любой агент** (Claude Code, Codex, Cursor, Copilot, Gemini CLI, OpenCode, …) через [`skills`](https://github.com/vercel-labs/skills):
-
-```bash
-npx skills add Vovamujik/meeting-transcriber -g
-```
-
-Или скопируй `skills/transcribe-meeting` в папку скилов своего агента (для Claude Code это `~/.claude/skills/`).
-
-Дальше просто попроси: *«Расшифруй ~/Downloads/standup.m4a и выпиши задачи с ответственными».*
-
-Скил работает только с агентами, которые запущены на твоём компьютере. В claude.ai и других облачных песочницах модели не скачать, и там нет видеокарты.
-
 ## Скорость
 
 Замер на Apple M3 Pro (18 ГБ), модель `large-v3-turbo`, запись на 3 минуты с двумя голосами: около минуты на всё (в 3 раза быстрее реального времени). Распознавание 35 с на CPU, выравнивание 9 с, спикеры 10 с на GPU Apple (на CPU было бы 97 с). Часовая встреча занимает примерно 20 минут. На видеокартах NVIDIA сильно быстрее.
@@ -194,14 +209,15 @@ npx skills add Vovamujik/meeting-transcriber -g
 
 | Проблема | Что делать |
 |---|---|
-| `GatedRepoError`, `401`, `403` | Запусти `--check`: он покажет, откуда взят токен и что с ним не так (нет токена, токен недействителен, условия не приняты на этом аккаунте, fine-grained токен без доступа к gated-репозиториям). См. [Токен Hugging Face](#токен-hugging-face-для-разделения-по-спикерам). |
-| Токен «invalid or expired (HTTP 401)» сразу после `hf auth login` | Старый `HF_TOKEN`, экспортированный в профиле терминала (`~/.zshrc`, `~/.bashrc`; на Windows — переменная окружения пользователя) или записанный в `.env`, главнее токена от `hf auth login`. Удали его и открой новый терминал; `--check` покажет, откуда он берётся. |
+| `GatedRepoError`, `401`, `403` | Запусти `--check`: он покажет, откуда взят токен и что с ним не так (нет токена, токен недействителен, условия не приняты на этом аккаунте, fine-grained токен без доступа к gated-репозиториям). См. [шаг 2](#2-получи-токен-hugging-face-для-разделения-по-спикерам). |
+| Токен «invalid or expired (HTTP 401)» сразу после `hf auth login` | Старый `HF_TOKEN`, экспортированный в профиле терминала (`~/.zshrc`, `~/.bashrc`; на Windows — переменная окружения пользователя) или записанный в `.env`, главнее токена от `hf auth login`. Удали его, открой новый терминал и перезапусти агента; `--check` покажет, откуда он берётся. |
 | Долго висит «Starting…» | Первый запуск после установки или обновления компилирует Python-пакеты: до нескольких минут, один раз. |
-| `ffmpeg not found` | Поставь ffmpeg (см. [Требования](#требования)). |
+| `ffmpeg not found` | Поставь ffmpeg (см. [шаг 1](#1-поставь-uv-ffmpeg-и-git)). |
 | `CERTIFICATE_VERIFY_FAILED` | На macOS исправляется автоматически. За корпоративным прокси укажи в `SSL_CERT_FILE` и `REQUESTS_CA_BUNDLE` сертификаты компании. |
 | Скачивание зависло или медленное | Загрузка продолжается с места остановки: прерви по Ctrl+C и запусти снова. |
 | Не хватает памяти | `--model medium` или `--batch-size 4` |
 | Ошибки CUDA / cuDNN на Linux | См. [заметки WhisperX про cuDNN](https://github.com/m-bain/whisperX/blob/main/CUDNN_TROUBLESHOOTING.md) или запускай с `--device cpu --diarize-device cpu`. |
+| `no audio track in the video` | В записи вообще нет звука (например, запись экрана без звука). |
 | Фразы-призраки вроде «Thank you.» или «Продолжение следует…» | На длинной тишине Whisper иногда «слышит» дежурные фразы. Это особенность модели. |
 
 ## Ограничения
@@ -229,7 +245,7 @@ npx skills add Vovamujik/meeting-transcriber -g
 
 ```bash
 uv sync                      # вместе с pytest и ruff
-uv run pytest                # тесты чистой логики, модели не нужны
+uv run pytest                # модели не нужны
 uv run ruff check src tests
 claude plugin validate .     # манифесты маркетплейса и плагина
 uvx --from skills-ref agentskills validate skills/transcribe-meeting
@@ -237,7 +253,7 @@ uvx --from skills-ref agentskills validate skills/transcribe-meeting
 
 Выпуск версии: подними версию в `pyproject.toml` и `.claude-plugin/plugin.json`, поставь тег `vX.Y.Z`, запушь его, затем закрепи `RELEASE` в `skills/transcribe-meeting/scripts/run.sh` и строку `uvx` в `SKILL.md` на новый релиз.
 
-Кода немного: `src/meeting_transcriber/cli.py` (конвейер, CLI, формат расшифровки) и `ui.py` (вывод в терминал). Issues и pull requests приветствуются; в баг-репорте укажи ОС, видеокарту, команду и вывод с `--verbose`.
+Кода немного: `src/meeting_transcriber/cli.py` (конвейер, CLI, формат расшифровки), `media.py` (извлечение звука) и `ui.py` (вывод в терминал). Issues и pull requests приветствуются; в баг-репорте укажи ОС, видеокарту, команду и вывод с `--verbose`.
 
 ## Благодарности
 

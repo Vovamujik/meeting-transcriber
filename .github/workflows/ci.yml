@@ -15,9 +15,11 @@ jobs:
         run: uv lock --check
       - name: Lint
         run: uvx ruff check src tests
+      - name: ffmpeg (for the audio extraction test)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Unit tests
         # Pure-logic tests only: no models, no torch. Avoids pulling ~4 GB of CUDA wheels on every run.
-        run: uv run --isolated --no-project --python 3.12 --with rich --with certifi --with python-dotenv --with pytest pytest -q
+        run: uv run --isolated --no-project --python 3.12 --with rich --with certifi --with python-dotenv --with numpy --with pytest pytest -q
         env:
           PYTHONPATH: src
       - name: Skill wrapper syntax
